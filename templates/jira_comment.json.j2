@@ -1,0 +1,16 @@
+{
+  "body": {
+    "type": "doc",
+    "version": 1,
+    "content": [
+{% for linha in linhas_comentario %}
+      {
+        "type": "paragraph",
+        "content": [
+          { "type": "text", "text": {{ linha | to_json }} }
+        ]
+      }{{ "," if not loop.last else "" }}
+{% endfor %}
+    ]
+  }
+}

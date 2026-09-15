@@ -1,0 +1,182 @@
+---
+- name: Verificar requisitos minimos do servidor e comentar resultado no Jira
+  hosts: all
+  gather_facts: false
+  vars_files:
+    - vars/requisitos.yml
+  vars:
+    tolerancia_ram: 0.95
+
+  tasks:
+    - name: Validar parametros obrigatorios
+      ansible.builtin.assert:
+        that:
+          - dispositivos is defined
+          - dominio is defined
+          - jira_issue_key is defined
+        fail_msg: >-
+          Parametros obrigatorios ausentes: dispositivos, dominio e
+          jira_issue_key sao necessarios (via --extra-vars).
+      delegate_to: localhost
+      run_once: true
+
+    - name: Validar credenciais do Jira no ambiente
+      ansible.builtin.assert:
+        that:
+          - lookup('env', 'JIRA_BASE_URL') | length > 0
+          - lookup('env', 'JIRA_EMAIL') | length > 0
+          - lookup('env', 'JIRA_API_TOKEN') | length > 0
+        fail_msg: >-
+          Defina as variaveis de ambiente JIRA_BASE_URL, JIRA_EMAIL e
+          JIRA_API_TOKEN antes de executar.
+      delegate_to: localhost
+      run_once: true
+
+    - name: Guardar credenciais do Jira
+      ansible.builtin.set_fact:
+        jira_base_url: "{{ lookup('env', 'JIRA_BASE_URL') }}"
+        jira_email: "{{ lookup('env', 'JIRA_EMAIL') }}"
+        jira_api_token: "{{ lookup('env', 'JIRA_API_TOKEN') }}"
+      no_log: true
+
+    - name: Selecionar faixa de requisitos aplicavel ao plano
+      ansible.builtin.set_fact:
+        requisitos: "{{ (tabela_requisitos | sort(attribute='max_dispositivos') | selectattr('max_dispositivos', 'ge', dispositivos | int) | list | first) }}"
+      when: (tabela_requisitos | selectattr('max_dispositivos', 'ge', dispositivos | int) | list | length) > 0
+
+    - name: Falhar cedo se quantidade de dispositivos excede a maior faixa suportada
+      ansible.builtin.fail:
+        msg: >-
+          Quantidade de dispositivos ({{ dispositivos }}) excede a maior
+          faixa suportada ({{ (tabela_requisitos | sort(attribute='max_dispositivos') | last).max_dispositivos }}).
+      when: requisitos is not defined
+
+    - name: Verificacao do servidor e comentario no Jira
+      block:
+        - name: Coletar fatos do servidor alvo
+          ansible.builtin.setup:
+
+        - name: Obter capacidade total de disco instalado (bytes)
+          ansible.builtin.shell: lsblk -b -d -n -o SIZE,TYPE | awk '$2=="disk"{sum+=$1} END{print sum+0}'
+          register: disco_bytes
+          changed_when: false
+
+        - name: Calcular valores atuais do servidor
+          ansible.builtin.set_fact:
+            cpu_atual: "{{ ansible_processor_vcpus }}"
+            ram_atual_gb: "{{ (ansible_memtotal_mb / 1024) | round(1) }}"
+            disco_atual_gb: "{{ (disco_bytes.stdout | int / 1000000000) | round(1) }}"
+
+        - name: Resolver dominio informado
+          ansible.builtin.command: getent hosts {{ dominio }}
+          register: dns_result
+          delegate_to: localhost
+          ignore_errors: true
+          changed_when: false
+
+        - name: Verificar certificado SSL do dominio
+          ansible.builtin.shell: >
+            echo | openssl s_client -connect {{ dominio }}:443 -servername {{ dominio }} 2>/dev/null
+            | openssl x509 -noout -checkend 0
+          register: ssl_result
+          delegate_to: localhost
+          ignore_errors: true
+          changed_when: false
+
+        - name: Inicializar lista de falhas
+          ansible.builtin.set_fact:
+            falhas: []
+
+        - name: Verificar CPU
+          ansible.builtin.set_fact:
+            falhas: "{{ falhas + ['CPU: servidor possui ' ~ cpu_atual ~ ' nucleo(s), minimo exigido e ' ~ requisitos.cpu_min ~ ' nucleo(s) para ate ' ~ requisitos.max_dispositivos ~ ' dispositivos.'] }}"
+          when: cpu_atual | int < requisitos.cpu_min | int
+
+        - name: Verificar memoria RAM
+          ansible.builtin.set_fact:
+            falhas: "{{ falhas + ['Memoria RAM: servidor possui aprox. ' ~ ram_atual_gb ~ ' GB, minimo exigido e ' ~ requisitos.ram_min_gb ~ ' GB.'] }}"
+          when: (ram_atual_gb | float) < (requisitos.ram_min_gb | float * tolerancia_ram)
+
+        - name: Verificar disco
+          ansible.builtin.set_fact:
+            falhas: "{{ falhas + ['Disco: servidor possui ' ~ disco_atual_gb ~ ' GB, minimo exigido e ' ~ requisitos.disco_min_gb ~ ' GB.'] }}"
+          when: (disco_atual_gb | float) < (requisitos.disco_min_gb | float)
+
+        - name: Verificar resolucao de dominio
+          ansible.builtin.set_fact:
+            falhas: "{{ falhas + ['Dominio: ' ~ dominio ~ ' nao resolveu para o IP do servidor (' ~ inventory_hostname ~ ').'] }}"
+          when: dns_result.rc != 0 or (dns_result.stdout is defined and inventory_hostname not in dns_result.stdout)
+
+        - name: Verificar certificado SSL
+          ansible.builtin.set_fact:
+            falhas: "{{ falhas + ['SSL: nao foi possivel validar um certificado SSL valido para ' ~ dominio ~ ' na porta 443.'] }}"
+          when: ssl_result.rc != 0
+
+        - name: Definir resultado final
+          ansible.builtin.set_fact:
+            verificacao_sucesso: "{{ falhas | length == 0 }}"
+
+        - name: Montar linhas do comentario de sucesso
+          ansible.builtin.set_fact:
+            linhas_comentario: >-
+              {{
+                ['Verificacao de requisitos: APROVADO',
+                 'Plano verificado: ate ' ~ requisitos.max_dispositivos ~ ' dispositivos',
+                 'CPU: ' ~ cpu_atual ~ ' nucleo(s) (minimo ' ~ requisitos.cpu_min ~ ')',
+                 'RAM: ' ~ ram_atual_gb ~ ' GB (minimo ' ~ requisitos.ram_min_gb ~ ' GB)',
+                 'Disco: ' ~ disco_atual_gb ~ ' GB (minimo ' ~ requisitos.disco_min_gb ~ ' GB)',
+                 'Dominio/SSL: ' ~ dominio ~ ' OK']
+              }}
+          when: verificacao_sucesso | bool
+
+        - name: Montar linhas do comentario de falha
+          ansible.builtin.set_fact:
+            linhas_comentario: "{{ ['Verificacao de requisitos: REPROVADO', 'Plano verificado: ate ' ~ requisitos.max_dispositivos ~ ' dispositivos', 'Motivo(s):'] + falhas }}"
+          when: not (verificacao_sucesso | bool)
+
+        - name: Comentar resultado no card do Jira
+          ansible.builtin.uri:
+            url: "{{ jira_base_url }}/rest/api/3/issue/{{ jira_issue_key }}/comment"
+            method: POST
+            force_basic_auth: true
+            url_username: "{{ jira_email }}"
+            url_password: "{{ jira_api_token }}"
+            headers:
+              Content-Type: application/json
+            body_format: raw
+            body: "{{ lookup('template', 'templates/jira_comment.json.j2') }}"
+            status_code: 201
+          delegate_to: localhost
+          no_log: true
+
+      rescue:
+        - name: Registrar detalhes do erro
+          ansible.builtin.set_fact:
+            erro_execucao: "{{ ansible_failed_result.msg | default('Erro desconhecido durante a execucao da verificacao.') }}"
+
+        - name: Tentar comentar o erro no Jira (melhor esforco)
+          ansible.builtin.uri:
+            url: "{{ jira_base_url }}/rest/api/3/issue/{{ jira_issue_key }}/comment"
+            method: POST
+            force_basic_auth: true
+            url_username: "{{ jira_email }}"
+            url_password: "{{ jira_api_token }}"
+            headers:
+              Content-Type: application/json
+            body_format: raw
+            body: "{{ lookup('template', 'templates/jira_comment_erro.json.j2') }}"
+            status_code: 201
+          delegate_to: localhost
+          ignore_errors: true
+          no_log: true
+
+        - name: Repropagar falha original para o chamador
+          ansible.builtin.fail:
+            msg: "{{ erro_execucao }}"
+
+    - name: Marcar execucao como falha caso requisitos nao atendidos
+      ansible.builtin.fail:
+        msg: >-
+          Servidor nao atende aos requisitos minimos. Detalhes no
+          comentario da issue {{ jira_issue_key }}.
+      when: verificacao_sucesso is defined and not (verificacao_sucesso | bool)
