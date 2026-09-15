@@ -187,6 +187,6 @@
     - name: Marcar execucao como falha caso requisitos nao atendidos
       ansible.builtin.fail:
         msg: >-
-          Servidor nao atende aos requisitos minimos. Detalhes no
-          comentario da issue {{ jira_issue_key }}.
+          Servidor nao atende aos requisitos minimos: {{ falhas | join('; ') }}
+          {{ ('(detalhes tambem comentados na issue ' ~ jira_issue_key ~ ')') if (comentar_jira | bool) else '' }}
       when: verificacao_sucesso is defined and not (verificacao_sucesso | bool)
