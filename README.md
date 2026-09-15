@@ -57,6 +57,22 @@ O `JIRA_API_TOKEN` e gerado em
   --jira-issue PROJ-123
 ```
 
+### Testar sem o Jira
+
+Para validar só a checagem de CPU/RAM/disco/dominio/SSL, sem comentar em
+nenhuma issue e sem precisar configurar `JIRA_BASE_URL`/`JIRA_EMAIL`/
+`JIRA_API_TOKEN`, use `--sem-jira`. O resultado e impresso no terminal:
+
+```bash
+./scripts/verificar-servidor.sh \
+  --ip 203.0.113.10 \
+  --porta 22 \
+  --senha 'senha-root' \
+  --dispositivos 3000 \
+  --dominio cliente.exemplo.com \
+  --sem-jira
+```
+
 O script:
 1. Grava os parametros num arquivo temporario (`chmod 600`, apagado ao
    final) para a senha nao aparecer em `ps aux`.

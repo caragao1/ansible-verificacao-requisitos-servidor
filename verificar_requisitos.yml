@@ -6,6 +6,7 @@
     - vars/requisitos.yml
   vars:
     tolerancia_ram: 0.95
+    comentar_jira: true
 
   tasks:
     - name: Validar parametros obrigatorios
@@ -13,10 +14,12 @@
         that:
           - dispositivos is defined
           - dominio is defined
-          - jira_issue_key is defined
+          - not (comentar_jira | bool) or jira_issue_key is defined
         fail_msg: >-
-          Parametros obrigatorios ausentes: dispositivos, dominio e
-          jira_issue_key sao necessarios (via --extra-vars).
+          Parametros obrigatorios ausentes: dispositivos e dominio sao
+          sempre necessarios; jira_issue_key e necessario quando
+          comentar_jira=true (padrao). Use comentar_jira=false para
+          testar sem integracao com o Jira.
       delegate_to: localhost
       run_once: true
 
@@ -31,6 +34,7 @@
           JIRA_API_TOKEN antes de executar.
       delegate_to: localhost
       run_once: true
+      when: comentar_jira | bool
 
     - name: Guardar credenciais do Jira
       ansible.builtin.set_fact:
@@ -134,6 +138,10 @@
             linhas_comentario: "{{ ['Verificacao de requisitos: REPROVADO', 'Plano verificado: ate ' ~ requisitos.max_dispositivos ~ ' dispositivos', 'Motivo(s):'] + falhas }}"
           when: not (verificacao_sucesso | bool)
 
+        - name: Exibir resultado no terminal
+          ansible.builtin.debug:
+            msg: "{{ linhas_comentario }}"
+
         - name: Comentar resultado no card do Jira
           ansible.builtin.uri:
             url: "{{ jira_base_url }}/rest/api/3/issue/{{ jira_issue_key }}/comment"
@@ -148,6 +156,7 @@
             status_code: 201
           delegate_to: localhost
           no_log: true
+          when: comentar_jira | bool
 
       rescue:
         - name: Registrar detalhes do erro
@@ -169,6 +178,7 @@
           delegate_to: localhost
           ignore_errors: true
           no_log: true
+          when: comentar_jira | bool
 
         - name: Repropagar falha original para o chamador
           ansible.builtin.fail:
