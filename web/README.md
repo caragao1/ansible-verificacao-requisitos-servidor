@@ -15,11 +15,16 @@ reimplementada em Node.js:
 - Conexão SSH direta com a biblioteca `ssh2` (sem precisar de `sshpass`).
 - Coleta de CPU/RAM/disco via `nproc`, `free`, `lsblk` (mesmos comandos).
 - Resolução de domínio via o módulo `dns` do Node.
-- Teste de porta 80 via conexão TCP direta (`net`), sem precisar subir
-  um servidor temporário nem do binário `nmap`: uma conexão recusada
-  (`ECONNREFUSED`) já confirma que a porta está alcançável (só não tem
-  nada escutando ainda, o que é normal pré-instalação); um timeout
-  indica que está bloqueada por firewall/NAT.
+- Teste de porta 80: sobe um `python3 -m http.server 80` temporário no
+  servidor alvo (via SSH) e testa, a partir da função serverless, se
+  ELE especificamente está acessível externamente — mesma abordagem do
+  playbook Ansible. Uma conexão TCP crua sem servidor real não é
+  suficiente: um firewall configurado para "rejeitar" (`REJECT`) parece
+  igual a "porta fechada, nada escutando", mas bloquearia o desafio
+  HTTP-01 do Let's Encrypt do mesmo jeito que um firewall que descarta
+  silenciosamente (`DROP`). O servidor de teste é sempre encerrado
+  (via PID capturado na hora de subir, não por `pkill`/padrão de nome)
+  ao final da checagem.
 - Comentário no Jira via REST API (mesmo formato ADF do playbook).
 
 O console da tela recebe os logs via **streaming de resposta HTTP**

@@ -1,6 +1,6 @@
 import { NextRequest } from "next/server";
 import { conectarSSH, executarComando } from "@/lib/ssh";
-import { resolverDominio, checarPorta } from "@/lib/rede";
+import { resolverDominio, checarPorta, type EstadoPorta } from "@/lib/rede";
 import { selecionarFaixa, TOLERANCIA_RAM } from "@/lib/requisitos";
 import { comentarNoJira } from "@/lib/jira";
 
@@ -135,33 +135,55 @@ async function executarVerificacao(
         `Disco: servidor possui ${discoAtualGb} GB, minimo exigido e ${faixa.discoMinGb} GB.`
       );
     }
+
+    log(`Resolvendo dominio ${dominio}...`);
+    const ipsResolvidos = await resolverDominio(dominio);
+    log(
+      ipsResolvidos.length
+        ? `Dominio resolve para: ${ipsResolvidos.join(", ")}`
+        : "Dominio nao resolveu para nenhum IP."
+    );
+    if (!ipsResolvidos.includes(ip)) {
+      falhas.push(
+        `Dominio: ${dominio} nao resolveu para o IP do servidor (${ip}).`
+      );
+    }
+
+    // Testar a porta 80 apenas com uma tentativa crua de conexao TCP nao
+    // distingue um firewall que rejeita (REJECT, parece igual a "fechado,
+    // nada escutando") de um que so libera de verdade — os dois bloqueariam
+    // o desafio HTTP-01 do Let's Encrypt do mesmo jeito. Por isso, como no
+    // playbook Ansible, sobe um servidor HTTP de teste real no alvo e
+    // confirma que ELE especificamente fica acessivel de fora.
+    log("Subindo servidor HTTP temporario na porta 80 para teste...");
+    const start = await executarComando(
+      conn,
+      "setsid nohup python3 -m http.server 80 </dev/null >/tmp/http_test_80.log 2>&1 & echo $!"
+    );
+    const pid = start.stdout.trim();
+
+    try {
+      let estadoPorta80: EstadoPorta = "filtered";
+      for (let tentativa = 0; tentativa < 3; tentativa++) {
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+        estadoPorta80 = await checarPorta(ip, 80, 4000);
+        if (estadoPorta80 === "open") break;
+      }
+      log(`Porta 80: ${estadoPorta80}`);
+      if (estadoPorta80 !== "open") {
+        falhas.push(
+          "Porta 80: nao esta acessivel externamente (necessaria para o Let's Encrypt emitir o certificado SSL na instalacao)."
+        );
+      }
+    } finally {
+      if (pid) {
+        await executarComando(conn, `kill ${pid} 2>/dev/null || true`);
+      }
+      log("Servidor HTTP temporario encerrado.");
+    }
   } finally {
     conn.end();
     log("Conexao SSH encerrada.");
-  }
-
-  log(`Resolvendo dominio ${dominio}...`);
-  const ipsResolvidos = await resolverDominio(dominio);
-  log(
-    ipsResolvidos.length
-      ? `Dominio resolve para: ${ipsResolvidos.join(", ")}`
-      : "Dominio nao resolveu para nenhum IP."
-  );
-  if (!ipsResolvidos.includes(ip)) {
-    falhas.push(
-      `Dominio: ${dominio} nao resolveu para o IP do servidor (${ip}).`
-    );
-  }
-
-  log(
-    "Testando acessibilidade da porta 80 (necessaria para o desafio HTTP-01 do Let's Encrypt)..."
-  );
-  const estadoPorta80 = await checarPorta(ip, 80);
-  log(`Porta 80: ${estadoPorta80}`);
-  if (estadoPorta80 === "filtered") {
-    falhas.push(
-      "Porta 80: nao esta acessivel externamente (necessaria para o Let's Encrypt emitir o certificado SSL na instalacao)."
-    );
   }
 
   const sucesso = falhas.length === 0;
