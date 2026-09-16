@@ -106,12 +106,15 @@ async function executarVerificacao(
     }
 
     log("Coletando memoria RAM...");
+    // Usa /proc/meminfo em vez de "free": e uma interface do kernel, nao
+    // muda com o idioma/locale do sistema (o "free" localizado em pt_BR
+    // imprime "Mem.:" em vez de "Mem:", o que quebrava o parser).
     const ramResult = await executarComando(
       conn,
-      "free -b | awk '/Mem:/{print $2}'"
+      "awk '/^MemTotal:/{print $2}' /proc/meminfo"
     );
-    const ramBytes = parseInt(ramResult.stdout.trim(), 10) || 0;
-    const ramAtualGb = Math.round((ramBytes / 1_073_741_824) * 10) / 10;
+    const ramKb = parseInt(ramResult.stdout.trim(), 10) || 0;
+    const ramAtualGb = Math.round((ramKb / 1_048_576) * 10) / 10;
     log(`RAM: ${ramAtualGb} GB`);
     if (ramAtualGb < faixa.ramMinGb * TOLERANCIA_RAM) {
       falhas.push(
