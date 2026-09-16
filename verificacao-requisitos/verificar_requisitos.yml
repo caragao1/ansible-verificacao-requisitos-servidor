@@ -78,14 +78,27 @@
           ignore_errors: true
           changed_when: false
 
-        - name: Verificar certificado SSL do dominio
-          ansible.builtin.shell: >
-            echo | openssl s_client -connect {{ dominio }}:443 -servername {{ dominio }} 2>/dev/null
-            | openssl x509 -noout -checkend 0
-          register: ssl_result
-          delegate_to: localhost
-          ignore_errors: true
-          changed_when: false
+        - name: Testar se a porta 80 do servidor esta acessivel externamente
+          block:
+            - name: Subir servidor HTTP temporario na porta 80
+              ansible.builtin.shell: python3 -m http.server 80
+              async: 25
+              poll: 0
+
+            - name: Aguardar o servidor HTTP temporario subir
+              ansible.builtin.wait_for:
+                port: 80
+                timeout: 5
+
+            - name: Checar acessibilidade da porta 80 a partir do control node (nmap)
+              ansible.builtin.command: nmap {{ inventory_hostname }} -p 80 -Pn
+              register: nmap_result
+              delegate_to: localhost
+              changed_when: false
+          always:
+            - name: Encerrar servidor HTTP temporario
+              ansible.builtin.shell: pkill -f "http.server 80" || true
+              changed_when: false
 
         - name: Inicializar lista de falhas
           ansible.builtin.set_fact:
@@ -111,10 +124,10 @@
             falhas: "{{ falhas + ['Dominio: ' ~ dominio ~ ' nao resolveu para o IP do servidor (' ~ inventory_hostname ~ ').'] }}"
           when: dns_result.rc != 0 or (dns_result.stdout is defined and inventory_hostname not in dns_result.stdout)
 
-        - name: Verificar certificado SSL
+        - name: Verificar acessibilidade da porta 80
           ansible.builtin.set_fact:
-            falhas: "{{ falhas + ['SSL: nao foi possivel validar um certificado SSL valido para ' ~ dominio ~ ' na porta 443.'] }}"
-          when: ssl_result.rc != 0
+            falhas: "{{ falhas + ['Porta 80: nao esta acessivel externamente (necessaria para o desafio HTTP-01 do Lets Encrypt emitir o certificado SSL na instalacao).'] }}"
+          when: "'80/tcp open' not in nmap_result.stdout"
 
         - name: Definir resultado final
           ansible.builtin.set_fact:
@@ -129,7 +142,8 @@
                  'CPU: ' ~ cpu_atual ~ ' nucleo(s) (minimo ' ~ requisitos.cpu_min ~ ')',
                  'RAM: ' ~ ram_atual_gb ~ ' GB (minimo ' ~ requisitos.ram_min_gb ~ ' GB)',
                  'Disco: ' ~ disco_atual_gb ~ ' GB (minimo ' ~ requisitos.disco_min_gb ~ ' GB)',
-                 'Dominio/SSL: ' ~ dominio ~ ' OK']
+                 'Dominio: ' ~ dominio ~ ' resolve corretamente para o servidor',
+                 'Porta 80: acessivel externamente (Lets Encrypt podera emitir o certificado na instalacao)']
               }}
           when: verificacao_sucesso | bool
 

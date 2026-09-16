@@ -24,13 +24,16 @@ correspondente. Um valor acima do exigido nunca reprova a verificacao.
 No **control node** (onde o Ansible roda):
 - `ansible-core` >= 2.14
 - `sshpass` (autenticacao SSH por senha): `apt install sshpass`
-- `openssl` (verificacao de certificado SSL)
+- `nmap` (teste de acessibilidade externa da porta 80): `apt install nmap`
 - Acesso de rede de saida ao Jira e ao dominio informado (a checagem de
-  DNS/SSL e feita a partir do control node, simulando um acesso externo)
+  DNS/porta 80 e feita a partir do control node, simulando um acesso
+  externo)
 
 No **servidor alvo**:
 - `lsblk` (utilitario padrao do `util-linux`, presente na quase totalidade
   das distros Linux)
+- `python3` (para subir o servidor HTTP temporario usado no teste de
+  porta 80 — normalmente ja presente, pois o proprio Ansible depende dele)
 
 ## Variaveis de ambiente obrigatorias (credenciais do Jira)
 
@@ -97,8 +100,16 @@ comentario e postado na issue do Jira informada.
 - **Disco**: soma da capacidade total dos discos fisicos (`lsblk`, tipo
   `disk`), nao do espaco livre em filesystem. Calculado em GB decimais
   (1 GB = 1.000.000.000 bytes).
-- **Dominio/SSL**: verifica se o dominio resolve para o IP do servidor e
-  se ha um certificado SSL valido (nao expirado) respondendo na porta 443.
+- **Dominio**: verifica apenas se o dominio resolve para o IP do
+  servidor. Não valida certificado SSL — o certificado so e emitido
+  durante a instalação do ACS (via certbot/Let's Encrypt), entao não
+  existe ainda no momento desta checagem.
+- **Porta 80**: sobe um `python3 -m http.server 80` temporario no
+  servidor alvo e testa, a partir do control node, se a porta esta
+  acessivel externamente (`nmap -p 80 -Pn`). Isso confirma que o Let's
+  Encrypt conseguira completar o desafio HTTP-01 e emitir o certificado
+  durante a instalação — sem depender de porta 443/certificado já
+  existente. O servidor temporario é sempre encerrado ao final do teste.
 - **Fora do escopo desta versao** (podem ser adicionados depois se
   necessario): suporte a instrucoes AVX/AVX2 da CPU, validacao de IP
   publico, e verificacao de que o servidor esta na rede do provedor
