@@ -1,0 +1,23 @@
+{
+  "name": "verificador-requisitos-web",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint"
+  },
+  "dependencies": {
+    "next": "16.3.5",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "ssh2": "1.15.0"
+  },
+  "devDependencies": {
+    "@types/node": "20.14.10",
+    "@types/react": "18.3.3",
+    "@types/ssh2": "1.15.0",
+    "typescript": "5.5.3"
+  }
+}
