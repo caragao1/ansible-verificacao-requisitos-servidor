@@ -97,7 +97,7 @@
               changed_when: false
           always:
             - name: Encerrar servidor HTTP temporario
-              ansible.builtin.shell: pkill -f "http.server 80" || true
+              ansible.builtin.shell: pkill -f "[h]ttp.server 80" || true
               changed_when: false
 
         - name: Inicializar lista de falhas
